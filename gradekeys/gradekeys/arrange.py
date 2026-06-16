@@ -99,33 +99,65 @@ def _build_right_hand(
     spec: GradeSpec,
     scale_pcs: list[int],
 ) -> None:
-    for mn in melody:
-        offset, dur = _quantise(mn.offset, mn.duration, spec.rhythm_grid)
-        if dur <= 0:
-            continue
-        if mn.is_rest:
+    for offset, dur, pitch in _prepare_melody_events(melody, spec.rhythm_grid):
+        if pitch is None:  # a rest
             if spec.fill_rests and dur >= 1.0:
                 _insert_fill(part, offset, dur, _chord_at(harmony, offset), spec)
             continue
 
-        pitches = [mn.pitch]
+        pitches = [pitch]
 
         # Harmony notes beneath the tune.
         if spec.rh_harmony == "thirds":
-            pitches.append(_diatonic_third_below(mn.pitch, scale_pcs))
+            pitches.append(_diatonic_third_below(pitch, scale_pcs))
         elif spec.rh_harmony == "full":
-            pitches.extend(_chord_tones_below(mn.pitch, _chord_at(harmony, offset)))
+            pitches.extend(_chord_tones_below(pitch, _chord_at(harmony, offset)))
 
         # Octave doubling on strong beats for a fuller, harder texture.
         if spec.rh_octave_doubling and _is_strong_beat(offset):
-            pitches.append(mn.pitch - 12)
+            pitches.append(pitch - 12)
 
         pitches = sorted(set(pitches))
 
+        # Ornament only when there's room for the grace note *and* a sustained
+        # main note afterwards, so we never overrun the next event.
         if spec.ornaments and dur >= 2.0:
             _insert_ornamented(part, offset, dur, pitches, scale_pcs)
         else:
             part.insert(offset, _make_event(pitches, dur))
+
+
+def _prepare_melody_events(
+    melody: list[MelodyNote], grid: float
+) -> list[tuple[float, float, int | None]]:
+    """Quantise, de-duplicate, and clip the melody into a strictly sequential
+    (non-overlapping) event list.
+
+    Overlapping or coincident notes in a single staff make ``makeNotation``
+    emit malformed ties; a monophonic-in-time event stream (chords are added
+    later, vertically) avoids that entirely.
+    """
+    events: list[tuple[float, float, int | None]] = []
+    for mn in melody:
+        offset, dur = _quantise(mn.offset, mn.duration, grid)
+        if dur > 0:
+            events.append((offset, dur, mn.pitch))
+    events.sort(key=lambda e: e[0])
+
+    # Keep one event per onset (the first), then clip each to the next onset.
+    deduped: list[tuple[float, float, int | None]] = []
+    for off, dur, pitch in events:
+        if deduped and abs(deduped[-1][0] - off) < 1e-6:
+            continue
+        deduped.append((off, dur, pitch))
+
+    cleaned: list[tuple[float, float, int | None]] = []
+    for i, (off, dur, pitch) in enumerate(deduped):
+        if i + 1 < len(deduped):
+            dur = min(dur, deduped[i + 1][0] - off)
+        if dur > 0:
+            cleaned.append((off, dur, pitch))
+    return cleaned
 
 
 # --------------------------------------------------------------------------- #
