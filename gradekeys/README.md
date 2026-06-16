@@ -57,7 +57,11 @@ uv pip install -e ".[pdf]"         # pure-pip PDF engraver (verovio) — no bina
 uv pip install -e ".[audio]"       # yt-dlp + librosa: name/URL input & vocal transcription
 uv pip install -e ".[separate]"    # demucs: stem separation for the feasibility check
 uv pip install -e ".[transcribe]"  # basic-pitch: polyphonic (piano) transcription
+uv pip install -e ".[web]"         # fastapi + uvicorn: the browser UI
 uv pip install -e ".[dev]"         # pytest + ruff
+
+# A practical combo that runs everything except polyphonic piano transcription:
+uv pip install -e ".[audio,pdf,web]"
 ```
 
 PDF rendering uses MuseScore or LilyPond if present on your PATH; otherwise the
@@ -80,19 +84,35 @@ gradekeys "let it be" --grade 4 --out ./let_it_be
 gradekeys song.wav --grade 7
 ```
 
+### Web UI
+
+```sh
+gradekeys-web          # serves http://127.0.0.1:8000
+# or: uvicorn gradekeys.webapp:app --port 8000
+```
+
+A single page walks through the three steps: enter a song name / URL or upload
+audio → see the feasibility verdict → pick a grade → the engraved PDF is shown
+inline with download links. Feasibility uses Demucs when the `separate` extra is
+installed and otherwise falls back to a no-separation **mix analysis**
+(`separate.analyze_mix`), so the UI works with just the `audio` + `pdf` + `web`
+extras (the solo-piano lock needs real separation and isn't attempted in the
+fallback).
+
 ## Architecture
 
 ```
 gradekeys/
 ├── models.py       # framework-free data structures (the symbolic hand-off point)
 ├── acquire.py      # Step 1: name / URL / file  -> local audio        [audio]
-├── separate.py     # Demucs split + per-stem energy measurement        [separate]
+├── separate.py     # Demucs split + energies, or no-Demucs mix analysis  [separate/audio]
 ├── feasibility.py  # Step 2: feasible / not-feasible / locked-solo-piano  (pure)
 ├── transcribe.py   # audio -> melody + harmony (basic-pitch / librosa) [audio/transcribe]
 ├── grading.py      # Grade 1-8 rule definitions                         (pure)
 ├── arrange.py      # SongMaterial + grade -> music21 Score              (pure)
 ├── engrave.py      # Score -> MusicXML + PDF                            [pdf]
-└── cli.py          # the interactive 3-step flow
+├── cli.py          # the interactive 3-step flow
+└── webapp.py       # FastAPI browser UI for the same flow               [web]
 ```
 
 The stages marked **(pure)** have no audio dependency and are covered by

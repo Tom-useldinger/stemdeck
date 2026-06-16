@@ -7,7 +7,7 @@ spec controls how much harmonic and rhythmic richness is layered around it.
 
 from __future__ import annotations
 
-from music21 import chord, clef, instrument, key, meter, note, stream, tempo
+from music21 import chord, clef, instrument, key, layout, meter, note, stream, tempo
 
 from .grading import GradeSpec, spec_for
 from .models import HarmonyChord, MelodyNote, SongMaterial
@@ -23,6 +23,9 @@ _NINTH = 14
 
 _LH_BASE_MIDI = 48   # around C3 — comfortable left-hand home
 _RH_TARGET = 72      # bring the melody's median to around C5
+# Even when a grade doesn't simplify rhythm, snap to at least a 16th-note grid
+# so transcribed durations stay representable in notation (no insane tuplets).
+_MIN_GRID = 0.25
 
 
 def render(material: SongMaterial, grade: int) -> stream.Score:
@@ -33,15 +36,17 @@ def render(material: SongMaterial, grade: int) -> stream.Score:
 
     melody = _normalise_melody_register(material.melody)
 
+    # A single instrument shared by both staves so the two parts read as one
+    # piano, not two separate instruments.
     rh = stream.Part(id="RH")
-    rh.insert(0, instrument.Piano())
+    rh.insert(0, _piano_instrument(named=True))
     rh.insert(0, clef.TrebleClef())
     rh.insert(0, meter.TimeSignature(material.time_signature))
     rh.insert(0, k)
-    rh.insert(0, tempo.MetronomeMark(number=material.tempo_bpm))
+    rh.insert(0, _tempo_mark(material.tempo_bpm))
 
     lh = stream.Part(id="LH")
-    lh.insert(0, instrument.Piano())
+    lh.insert(0, _piano_instrument(named=False))
     lh.insert(0, clef.BassClef())
     lh.insert(0, meter.TimeSignature(material.time_signature))
     lh.insert(0, k)
@@ -54,9 +59,34 @@ def render(material: SongMaterial, grade: int) -> stream.Score:
     score.insert(0, rh)
     score.insert(0, lh)
 
+    # Brace the two staves into a single grand staff and bar them together.
+    grand_staff = layout.StaffGroup(
+        [rh, lh], name="Piano", abbreviation="Pno.", symbol="brace"
+    )
+    grand_staff.barTogether = True
+    score.insert(0, grand_staff)
+
     # Bar the parts and fill gaps with rests so the result is valid notation.
     score.makeNotation(inPlace=True)
     return score
+
+
+def _piano_instrument(named: bool) -> instrument.Instrument:
+    piano = instrument.Piano()
+    # Only the top staff carries the visible label; the brace name comes from
+    # the StaffGroup, so blank the per-part names to avoid "Piano" twice.
+    piano.partName = ""
+    piano.partAbbreviation = ""
+    piano.instrumentName = "" if not named else ""
+    return piano
+
+
+def _tempo_mark(bpm: float) -> tempo.TempoText:
+    # Use a text tempo with the Unicode quarter note so it renders everywhere,
+    # including engravers whose music font lacks the metronome notehead glyph.
+    tt = tempo.TempoText(f"♩ = {round(bpm)}")
+    tt.placement = "above"
+    return tt
 
 
 # --------------------------------------------------------------------------- #
@@ -249,8 +279,7 @@ def _normalise_melody_register(melody: list[MelodyNote]) -> list[MelodyNote]:
 
 
 def _quantise(offset: float, dur: float, grid: float) -> tuple[float, float]:
-    if grid <= 0:
-        return offset, dur
+    grid = max(grid, _MIN_GRID)  # never finer than a 16th, even at high grades
     q_off = round(offset / grid) * grid
     q_dur = max(grid, round(dur / grid) * grid)
     return q_off, q_dur

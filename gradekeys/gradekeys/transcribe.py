@@ -62,7 +62,24 @@ def _transcribe_monophonic(audio_path, tempo_bpm) -> list[MelodyNote]:
             cur_midi = midi
             start_frame = i
     flush(len(f0))
-    return notes
+    return _clean_segmentation(notes)
+
+
+def _clean_segmentation(notes: list[MelodyNote], min_beats: float = 0.3) -> list[MelodyNote]:
+    """Drop pitch-tracker glissando artifacts: very short notes between two
+    sustained ones are absorbed into the preceding note (extending its length).
+    """
+    cleaned: list[MelodyNote] = []
+    for n in notes:
+        if not n.is_rest and n.duration < min_beats and cleaned and not cleaned[-1].is_rest:
+            prev = cleaned[-1]
+            cleaned[-1] = MelodyNote(
+                prev.pitch, prev.offset,
+                round(n.offset + n.duration - prev.offset, 3),
+            )
+            continue
+        cleaned.append(n)
+    return cleaned
 
 
 def _transcribe_polyphonic(audio_path, tempo_bpm):
